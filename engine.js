@@ -8,6 +8,8 @@ import {windAt,weatherHash} from './weather.js?v=13';
 import {CLUB_RETRIEVE_SECONDS,clubRetrievalPoint,cartBagAnchor} from './club-animation.js?v=13';
 import {CART_GAP,cartAdvanceLimit,cartConflict,chooseCartSlots,findCartYieldRoute,cartEdgeClear} from './cart-traffic.js?v=13';
 import {planCartBays,planDepotBays} from './cart-bays.js?v=13';
+import {shoulderPath,shoulderParking,cartSegmentAllowed} from './cart-navigation.js?v=16';
+import {cartJourney} from './cart-journey.js?v=16';
 export {CLUBS,SHOT_STYLES};
 export const N = 64;
 const LEGACY_N = 32;
@@ -102,6 +104,7 @@ export class GolfSim {
   constructor({ empty = false,preset='demo' } = {}) { this.reset(empty,preset); }
 
   reset(empty = false,preset='demo') {
+    this._cartNetwork=null;this._manualCartId=null;this._driveInput=null;
     if(!COURSE_IDS.has(preset))throw new RangeError('Elegí un campo disponible.');
     empty=empty||preset==='empty';
     this.courseId=empty?'empty':preset;
@@ -222,6 +225,7 @@ export class GolfSim {
     if (this.money < cost) return { ok: false, message: 'No hay presupuesto suficiente.' };
     this.money -= cost;
     this.tiles[y][x] = { type };
+    this.invalidateCartNetwork();
     this._pruneCartBays();
     // Paths are rebuilt on demand if an edit places water in a walking route.
     for (const g of this.golfers) g._path=null;
@@ -256,6 +260,7 @@ export class GolfSim {
   }
 
   removeHole(id) {
+    this.stopCartDriving();
     const index = this.holes.findIndex(h => h.id === id);
     if (index < 0) return { ok: false, message: 'No se encontró ese hoyo.' };
     const removed = this.holes.splice(index, 1)[0];
@@ -266,6 +271,7 @@ export class GolfSim {
       if(group.holeId===id&&group.phase!=='leaving') {
         const next=group.plan.find(hid=>!group.completed.includes(hid));
         group.actorId=null;
+        delete group._resumeBall;delete group._stopTargets;delete group._walkNext;
         if(next)group.holeId=next;
         else this._recordGroupRound(group);
         group.phase='returningCart';group.phaseTime=0;
@@ -300,6 +306,7 @@ export class GolfSim {
   }
 
   abandonPlayerRound() {
+    this.stopCartDriving();
     if(this.playerRound?.status!=='playing')return false;
     const g=this.golfers.find(g=>g.id===this.playerRound.golferId);
     if(g){g.controlled=false;if(g.phase==='aiming')this._phase(g,'preparing',PACE.prepare)}
@@ -414,18 +421,18 @@ export class GolfSim {
 
   save() {
     const bays=this._physicalBays();
-    return JSON.stringify({ version: 8, weather:this.weather, cartBays:bays.cartBays, depotBays:bays.depotBays, courseId:this.courseId,courseRevision:this.courseRevision,coursePlanSize:this.coursePlanSize, size:N, elevations:this.elevations, playerRound:this.playerRound, tiles: this.tiles, holes: this.holes, money: this.money, fee: this.fee,
+    return JSON.stringify({ version: 9, weather:this.weather, cartBays:bays.cartBays, depotBays:bays.depotBays, courseId:this.courseId,courseRevision:this.courseRevision,coursePlanSize:this.coursePlanSize, size:N, elevations:this.elevations, playerRound:this.playerRound, tiles: this.tiles, holes: this.holes, money: this.money, fee: this.fee,
       day: this.day, time: this.time, speed: this.speed, paused: this.paused, satisfaction: this.satisfaction,
       totalVisitors: this.totalVisitors, totalRevenue: this.totalRevenue, history: this.history,
       dayVisitors: this.dayVisitors, dayRevenue: this.dayRevenue, nextHoleId: this._nextHoleId, nextId: this._nextId,
       golfers: this.golfers, clock: this._clock, arrival: this._arrival, selectedGolferId: this.selectedGolferId, events: this.events,
-      groups:this.groups,carts:this.carts,nextGroupId:this._nextGroupId,nextCartId:this._nextCartId });
+      groups:this.groups,carts:this.carts.map(c=>c.id===this._manualCartId?{...c,_speed:0,_path:null,_pathIndex:0}:c),nextGroupId:this._nextGroupId,nextCartId:this._nextCartId });
   }
 
   load(json) {
     try {
       const data = JSON.parse(json);
-      if (!data || ![1,2,3,4,5,6,7,8].includes(data.version) || !Array.isArray(data.tiles))return false;
+      if (!data || ![1,2,3,4,5,6,7,8,9].includes(data.version) || !Array.isArray(data.tiles))return false;
       if(data.version>=6&&!COURSE_IDS.has(data.courseId))return false;
       if(data.version>=8&&(!data.weather||!Number.isSafeInteger(data.weather.seed)||data.weather.seed<0||data.weather.seed>4294967295||typeof data.weather.enabled!=='boolean'))return false;
       const savedSize=data.tiles.length;
@@ -603,6 +610,7 @@ export class GolfSim {
     return p;
   }
   connectCartPaths({parkingBays=true,compactDepot=parkingBays&&(this._freshCourse||this.depotBays.length>0),preserveSize=0}={}){
+    this.invalidateCartNetwork();
     const root={x:7,y:29};if(!this._roadAllowed(root.x,root.y))return {ok:false,message:'Liberá la salida de la casa club para conectar los caminos.'};
     const allowed=(x,y)=>this._roadAllowed(x,y)&&(!(x<preserveSize&&y<preserveSize)||this.tile(x,y)?.type==='path'),link=(a,b,n=false,s=false)=>this._roadLink(a,b,n,s,preserveSize);
     for(let y=28;y<=(compactDepot?29:32);y++)for(let x=6;x<=12;x++)if(allowed(x,y))this.tiles[y][x]={type:'path'};
@@ -631,10 +639,10 @@ export class GolfSim {
       const depot=planDepotBays(this.navigationTiles(),{allowed:bayAllowed,existingSlots:this.depotBays,reserved:this.cartBays.flatMap(b=>b.slots)});
       for(const p of depot.patches)this.tiles[p.y][p.x]={type:'path'};this.depotBays=depot.slots;
     }
-    this._freshCourse=false;
+    this._freshCourse=false;this.invalidateCartNetwork();
     const unreachable=stations.filter(p=>!this._findPath(root,p,true)).length;
     this._event(unreachable?'Hay salidas sin camino de carritos; conectá un camino seco.':'Caminos de carritos conectados con la casa club y las salidas.');
-    return {ok:true,message:unreachable?'Se conectó lo posible. Quedan salidas bloqueadas por el terreno.':'Caminos continuos conectados. Los carritos usan solo el camino.'};
+    return {ok:true,message:unreachable?'Se conectó lo posible. Quedan salidas bloqueadas por el terreno.':'Caminos conectados; se puede estacionar en el pasto lateral.'};
   }
   refineCartPaths(){
     const root={x:7,y:29};if(!this._roadAllowed(root.x,root.y))return {ok:false,message:'Liberá la salida de la casa club para afinar los caminos.'};
@@ -658,6 +666,8 @@ export class GolfSim {
     return {...result,message:result.message.includes('bloqueadas')?`${result.message} Podés deshacer el rediseño.`:'Caminos más discretos junto a los hoyos. Podés deshacer el rediseño.'};
   }
   _parkingSlots(h,exceptIds=[]){
+    this.refreshCartNetwork();
+    const shoulder=shoulderParking(this,h.tee,exceptIds);if(shoulder.length===2)return shoulder;
     const designated=this.cartBays.find(b=>b.holeId===h.id);
     if(designated?.slots.every(p=>this.tile(p.x,p.y)?.type==='path'))return chooseCartSlots(designated.slots,this.carts,{origin:this._parkingDesired(h),exceptIds});
     const candidates=[];for(let y=Math.max(0,Math.ceil(h.tee.y-6));y<=Math.min(N-1,Math.floor(h.tee.y+6));y++)for(let x=Math.max(0,Math.ceil(h.tee.x-6));x<=Math.min(N-1,Math.floor(h.tee.x+6));x++)if(this.cartRoadAt(x,y)&&!this.bridgeAt(x,y)&&distance({x,y},h.tee)<=6)candidates.push({x,y});
@@ -721,6 +731,7 @@ export class GolfSim {
     }
     if(new Set(carts.map(c=>c.id)).size!==carts.length)return false;
     for(const g of groups){
+      if(g._resumeBall!=null&&typeof g._resumeBall!=='boolean'||g._walkNext!=null&&typeof g._walkNext!=='boolean'||g._stopTargets!=null&&(!Array.isArray(g._stopTargets)||g._stopTargets.length!==g.members.length||g._stopTargets.some(p=>!point(p))))return false;
       if(!Number.isSafeInteger(g.id)||g.id<1||!gp.has(g.phase)||!Array.isArray(g.members)||g.members.length<1||g.members.length>4||g.members.some(id=>!ids.has(id))||!validIds(g.plan)||g.plan.some(id=>!holes.some(h=>h.id===id))||!validIds(g.completed))return false;
       if(g.phase!=='leaving'&&!(['returningCart','boarding'].includes(g.phase)&&!g.plan.length)&&!holes.some(h=>h.id===g.holeId))return false;
       if(!Number.isFinite(g.phaseTime)||g.phaseTime<0||g.phaseTime>600||!Number.isFinite(g.startedAt)||!Number.isFinite(g.cooldown)||!Array.isArray(g.played)||g.played.some(id=>!g.members.includes(id))||!Array.isArray(g.order)||g.order.some(id=>!g.members.includes(id)))return false;
@@ -778,10 +789,10 @@ export class GolfSim {
     trip._path=this._cartPath(trip);return trip._path?trip:null;
   }
   _trafficTripBusy(groupId){
-    // Narrow neighbouring lanes are closer than the cart clearance, even when
-    // their centre lines do not intersect. One pair reserves a transfer while
-    // the other groups keep playing or wait in their off-road bays.
-    return this.carts.some(c=>c.groupId!==groupId&&!c._roadWaiting&&(c.phase==='driving'||c.phase==='blocked'&&c._path?.length));
+    // Reserve nearby merges; distant groups can keep travelling. Continuous
+    // collision braking and replanning protect later encounters on the route.
+    const group=this.groups.find(g=>g.id===groupId),own=this.carts.filter(c=>c.groupId===groupId),hole=this.holes.find(h=>h.id===group?.holeId),near=[...own,...(group?._stopTargets||[]),...(hole?[hole.tee]:[])];
+    return this.carts.some(c=>c.groupId!==groupId&&!c._roadWaiting&&(c.phase==='driving'||c.phase==='blocked'&&c._path?.length)&&near.some(p=>distance(c,p)<5||c._target&&distance(c._target,p)<5));
   }
   _commitCartTrips(trips){
     for(const trip of trips){
@@ -801,7 +812,8 @@ export class GolfSim {
   _beginGroupHole(group,hole){
     if(this._clock<(group._tripRetryAt||0))return false;
     if(this._trafficTripBusy(group.id)){group._tripRetryAt=this._clock+.6;return false;}
-    const own=this.carts.filter(c=>c.groupId===group.id),parking=this._parkingSlots(hole,own.map(c=>c.id));
+    group._tripRetryAt=this._clock+3;
+    const own=this.carts.filter(c=>c.groupId===group.id),walkToTee=group._walkNext&&own.every(c=>distance(c,hole.tee)<10),parking=walkToTee?own.map(copyPoint):this._parkingSlots(hole,own.map(c=>c.id));
     if(parking.length<2){
       const designated=this.cartBays.find(b=>b.holeId===hole.id),missing=designated?designated.slots.some(p=>this.tile(p.x,p.y)?.type!=='path'):this._parkingSlots(hole,this.carts.map(c=>c.id)).length<2;
       if(missing)for(let i=0;i<own.length;i++){
@@ -811,8 +823,8 @@ export class GolfSim {
       return false;
     }
     const bridgeWaypoints=group.completed.at(-1)===6&&hole.id===7&&this.coursePlan?.bridges?.length?[copyPoint(this.coursePlan.bridges[0].to),copyPoint(this.coursePlan.bridges[0].from)]:[];
-    const trips=own.map((c,i)=>this._plannedCartTrip(c,parking[i],bridgeWaypoints));
-    if(trips.some(t=>!t)||this._trafficTripBusy(group.id)){group._tripRetryAt=this._clock+.6;return false;}
+    const trips=walkToTee?[]:this._planCartPair(own,parking,bridgeWaypoints);
+    if(trips.some(t=>!t)||this._trafficTripBusy(group.id)){group._tripRetryAt=this._clock+3;return false;}
     delete group._tripRetryAt;
     this._commitCartTrips(trips);
     group.phase='driving';group.startedAt=this._clock;group.phaseTime=0;group.actorId=null;group.played=[];group.order=[...group.members];group.cooldown=0;
@@ -825,6 +837,8 @@ export class GolfSim {
       g.holeId=hole.id;g.holeIndex=this.holes.findIndex(h=>h.id===hole.id);g.strokes=0;g.ball={x:hole.tee.x+normal.x*(i-.5)*.16,y:hole.tee.y+normal.y*(i-.5)*.16};
       g.shot=null;g._addressBall=null;g._manualShot=null;g._path=null;g._pendingHoleFinish=false;g._contactMade=false;g.carryClub=false;this._phase(g,'riding');g.mood=clamp(g.mood+(info.beauty-65)*.06,10,100);
     });
+    if(walkToTee){group.phase='parking';group.phaseTime=0;for(const c of own)c.phase='parked';}
+    delete group._walkNext;
   }
   _setWalk(g,target,phase='walking',kind='ball'){
     this._phase(g,phase);g._target=copyPoint(target);g._path=null;g._pathIndex=0;g._speed=0;g._stuck=0;g._walkKind=kind;
@@ -863,7 +877,7 @@ export class GolfSim {
   _departGroup(group){
     this._recordGroupRound(group);
     const destinations=chooseCartSlots(this._depotCandidates(),this.carts,{origin:{x:7,y:29},exceptIds:this.carts.filter(c=>c.groupId===group.id).map(c=>c.id)});if(destinations.length<2){group.phase='boarding';group.phaseTime=1;return false;}
-    const own=this.carts.filter(c=>c.groupId===group.id),trips=own.map((c,i)=>this._plannedCartTrip(c,destinations[i]));
+    const own=this.carts.filter(c=>c.groupId===group.id),trips=this._planCartPair(own,destinations);
     if(trips.some(t=>!t)||this._trafficTripBusy(group.id)){group.phase='boarding';group.phaseTime=1;return false;}
     this._commitCartTrips(trips);group.phase='leaving';group.actorId=null;for(const g of this._members(group))this._phase(g,'riding');
   }
@@ -877,7 +891,7 @@ export class GolfSim {
       const own=this.carts.filter(c=>c.groupId===group.id);
       if(own.some(c=>this.depotBays.some(p=>distance(c,p)<.01)))continue;
       const slots=chooseCartSlots(this.depotBays,this.carts,{exceptIds:own.map(c=>c.id),origin:{x:7,y:29}});if(slots.length<2)return;
-      const trips=own.map((c,i)=>this._plannedCartTrip(c,slots[i]));if(trips.some(t=>!t))continue;
+      const trips=this._planCartPair(own,slots);if(trips.some(t=>!t))continue;
       this._commitCartTrips(trips);group._queueTransfer=true;delete group._tripRetryAt;
       for(const g of this._members(group))this._comment(g,'Esperamos un momento en las plazas de la casa club.');
       return;
@@ -887,11 +901,13 @@ export class GolfSim {
     this._clock+=dt;this.time+=dt*.009;if(this.time>=18)this._closeDay();
     if(this.holes.length){this._arrival-=dt;if(this._arrival<=0){this._spawnGroup();this._arrival=(55+Math.random()*15)*(1+Math.max(0,this.fee-55)/55)}}
     for(const c of this.carts)if((c.phase==='driving'||c.phase==='blocked')&&!c._path&&!c._trafficWaiting&&!c._roadWaiting&&this._clock>=(c._routeRetryAt||0)){
+      if(c.id===this._manualCartId)continue;
       c._path=this._cartPath(c);c._pathIndex=0;c._routeAttemptAt=this._clock;
       if(c._path)delete c._routeRetryAt;else c._routeRetryAt=this._clock+1.2;
     }
     for(const c of this.carts)if((c.phase==='driving'||c.phase==='blocked')&&!c._roadWaiting){
-      if(this._move(c,dt,PACE.cart)){c.phase='parked';c._speed=0}
+      if(c.id===this._manualCartId)this._driveCartStep(c,dt);
+      else if(this._move(c,dt,this.cartRoadAt(c.x,c.y)?PACE.cart:PACE.cart*.55)){c.phase='parked';c._speed=0}
       const rider=this.golfers.find(g=>g.id===c.golferId);if(rider?.phase==='riding'){rider.x=c.x;rider.y=c.y;rider.heading=c.heading}
     }
     for(const g of this.golfers){
@@ -912,7 +928,9 @@ export class GolfSim {
       }else if(g.phase==='retrievingClub'){
         if(g.poseTime>=g.actionDuration){
           g.carryClub=true;const h=this.holes.find(h=>h.id===g.holeId),members=this._members(this.groups.find(gr=>gr.id===g.groupId)),i=members.findIndex(m=>m.id===g.id);
-          this._setWalk(g,this._dryPoint({x:h.tee.x-.8+i*.8,y:h.tee.y+.85}),'disembarking','tee');
+          const group=this.groups.find(gr=>gr.id===g.groupId),finished=g._completed.includes(h.id);
+          const target=group._resumeBall?(finished?this._dryPoint({x:h.green.x+.6,y:h.green.y+.6}):this._stance(g)):this._dryPoint({x:h.tee.x-.8+i*.8,y:h.tee.y+.85});
+          this._setWalk(g,target,'disembarking',finished?'finished':group._resumeBall?'ball':'tee');
         }
       }else if(g.phase==='preparing'){
         if(g.poseTime>=g.actionDuration){this._phase(g,'swinging',g._isPutting?PACE.putt:PACE.swing);g._contactMade=false}
@@ -943,15 +961,16 @@ export class GolfSim {
           if(point)this._setWalk(g,point,'disembarking','bag');
           else{this._phase(g,'blocked');g._resumePhase='disembarking';g._target=null;g._walkKind='bag';this._comment(g,'Liberá un paso detrás de la bolsa del carrito.');}
         });}
-      }else if(group.phase==='disembarking'&&members.every(g=>g.phase==='waiting')){group.phase='gathering';group.phaseTime=PACE.gather;this._comment(members[0],'¿Quién empieza?')}
+      }else if(group.phase==='disembarking'&&members.every(g=>['waiting','holed'].includes(g.phase))){group.phase='gathering';group.phaseTime=group._resumeBall?1:PACE.gather;this._comment(members[0],group._resumeBall?'Seguimos desde acá.':'¿Quién empieza?')}
       else if(group.phase==='gathering'){
-        group.phaseTime=Math.max(0,group.phaseTime-dt);if(!group.phaseTime){group.phase='playing';group.cooldown=.5}
+        group.phaseTime=Math.max(0,group.phaseTime-dt);if(!group.phaseTime){group.phase='playing';group.cooldown=.5;if(group._resumeBall){delete group._resumeBall;group.played=[];group.order=[...members].sort((a,b)=>distance(b.ball,hole.green)-distance(a.ball,hole.green)).map(g=>g.id);}}
       }else if(group.phase==='playing'&&!group.actorId){
         group.cooldown=Math.max(0,group.cooldown-dt);if(group.cooldown)continue;
         if(members.every(g=>g.phase==='holed')){group.phase='finishing';group.phaseTime=4;continue}
         const candidate=group.order.map(id=>members.find(g=>g.id===id)).find(g=>g&&g.phase==='waiting'&&!group.played.includes(g.id));
         if(candidate)this._startTurn(group,candidate);
         else if(members.every(g=>['afterShot','holed'].includes(g.phase))){
+          if(this._stageCartAdvance(group,hole,members))continue;
           group.phase='walking';for(const g of members){if(g.phase==='afterShot')this._setWalk(g,this._stance(g));else if(distance(g,hole.green)>.5)this._setWalk(g,this._dryPoint({x:hole.green.x+.6,y:hole.green.y+.6}),'walking','finished')}
         }
       }else if(group.phase==='walking'&&members.every(g=>['waiting','holed'].includes(g.phase))){group.phase='playing';group.played=[];group.order=[...members].sort((a,b)=>distance(b.ball,hole.green)-distance(a.ball,hole.green)).map(g=>g.id);group.cooldown=1}
@@ -961,6 +980,8 @@ export class GolfSim {
           const duration=this._clock-group.startedAt;this.history.push({type:'hole',groupId:group.id,holeId:group.holeId,day:this.day,duration:Math.round(duration),members:members.map(g=>({name:g.name,strokes:g.strokes}))});this.history=this.history.slice(-150);
           this._event(`${hole.name}: ${Math.floor(duration/60)} min ${Math.round(duration%60)} s · grupo completo.`);group.completed.push(group.holeId);group.phase='returningCart';
           if(!group.plan.some(id=>!group.completed.includes(id)&&this.holes.some(h=>h.id===id)))this._recordGroupRound(group);
+          const next=this.holes.find(h=>h.id===group.plan.find(id=>!group.completed.includes(id)));
+          if(next&&distance(hole.green,next.tee)<10&&carts.every(c=>distance(c,next.tee)<10))group._walkNext=true;
           for(const g of members){const c=this.carts.find(c=>c.id===g.cartId);this._setWalk(g,c,'returningCart','cart')}
         }
       }else if(group.phase==='returningCart'){
@@ -968,6 +989,7 @@ export class GolfSim {
         if(members.every(g=>g.phase==='boarding')){group.phase='boarding';group.phaseTime=PACE.board;}
       }
       else if(group.phase==='boarding'){
+        if(group._resumeBall&&group._stopTargets){group.phaseTime=Math.max(0,group.phaseTime-dt);if(!group.phaseTime)this._resumeCartAdvance(group,carts,members);continue;}
         group.phaseTime=Math.max(0,group.phaseTime-dt);if(!group.phaseTime){const next=group.plan.find(id=>!group.completed.includes(id)&&this.holes.some(h=>h.id===id));if(next){group.holeId=next;group.phase='queued';for(const g of members)this._phase(g,'riding')}else this._departGroup(group)}
       }else if(group.phase==='leaving'&&carts.every(c=>c.phase==='parked')){
         this.golfers=this.golfers.filter(g=>g.groupId!==group.id);this.carts=this.carts.filter(c=>c.groupId!==group.id);this.groups=this.groups.filter(g=>g.id!==group.id);if(!this.golfers.some(g=>g.id===this.selectedGolferId))this.selectedGolferId=null;
@@ -979,7 +1001,7 @@ export class GolfSim {
     const target=entity._target;if(!target)return true;
     const cartOnly=Number.isSafeInteger(entity.golferId);
     if(cartOnly&&!entity._path&&!entity._trafficWaiting&&this._clock<(entity._routeRetryAt||0)&&entity._routeAttemptAt!==this._clock)return false;
-    const nav=this.navigationTiles();
+    const nav=cartOnly?this.cartNetwork().nav:this.navigationTiles();
     if(cartOnly&&entity._trafficWaiting){
       if(this._clock<(entity._trafficCheckAt||0))return false;entity._trafficCheckAt=this._clock+.6;
       const winner=this.carts.find(c=>c.id===entity._trafficWinner),resume=this._findPath(entity,entity._trafficGoal,true);
@@ -989,10 +1011,10 @@ export class GolfSim {
     if(cartOnly&&entity._path){
       const points=[entity,...entity._path.slice(entity._pathIndex)];
       if(points.some((p,i)=>{
-        if(!this.cartRoadAt(p.x,p.y))return true;
+        if(!this.cartGroundAt(p.x,p.y))return true;
         if(!i)return false;
         const a={x:Math.round(points[i-1].x),y:Math.round(points[i-1].y)},b={x:Math.round(p.x),y:Math.round(p.y)};
-        return (a.x!==b.x||a.y!==b.y)&&(!roadEdgeAllowed(nav,a,b)||!this._navigationEdge(points[i-1],p));
+        return (a.x!==b.x||a.y!==b.y)&&(!roadEdgeAllowed(nav,a,b)||!cartSegmentAllowed(this,points[i-1],p,{body:false}));
       })||!entity._trafficGoal&&points.some((p,i)=>i>0&&!cartEdgeClear(points[i-1],p,this.carts,{exceptIds:[entity.id]})))entity._path=null;
     }
     if(!entity._path){
@@ -1013,9 +1035,10 @@ export class GolfSim {
       if(limit.reason){
         entity._speed=0;entity._trafficWait=(entity._trafficWait||0)+dt;
         if(limit.yieldTo&&!entity._trafficGoal){
-          const winner=this.carts.find(c=>c.id===limit.yieldTo),path=findCartYieldRoute(nav,entity,winner,this.carts);
+          const winner=this.carts.find(c=>c.id===limit.yieldTo),path=findCartYieldRoute(nav,entity,winner,this.carts,{neighbors:(x,y)=>roadNeighbors(nav,x,y).filter(p=>cartSegmentAllowed(this,{x,y},p,{body:false}))});
           if(path){entity._trafficGoal=copyPoint(target);entity._trafficWinner=winner.id;entity._target=copyPoint(path.at(-1));entity._path=path;entity._pathIndex=0;return false;}
         }
+        if(entity._trafficWait>1.2&&!entity._trafficGoal){entity._path=null;entity._trafficWait=0;return false;}
       }else entity._trafficWait=0;
     }
     if(d<=step+(cartOnly?0:.002)){
@@ -1029,7 +1052,7 @@ export class GolfSim {
   _cartPath(c){
     let from=c,result=[];
     for(const target of [...(c._trafficGoal?[]:c._bridgeWaypoints||[]),c._target]){
-      const part=this._findPath(from,target,true,(a,b)=>cartEdgeClear(a,b,this.carts,{exceptIds:[c.id]}));if(!part)return null;result.push(...part);from=target;
+      const part=this._findPath(from,target,true,(a,b)=>cartEdgeClear(a,b,this.carts,{exceptIds:[c.id],includeMoving:true}));if(!part)return null;result.push(...part);from=target;
     }return result;
   }
 
@@ -1149,17 +1172,12 @@ export class GolfSim {
   }
 
   _findPath(from, target, cartOnly=false, edgeAllowed) {
+    if(cartOnly){this.refreshCartNetwork();return shoulderPath(this,from,target,edgeAllowed);}
     if(this.tile(target.x,target.y)?.type==='water'&&!this.bridgeAt(target.x,target.y))return null;
-    if(cartOnly&&(!this.cartRoadAt(from.x,from.y)||!this.cartRoadAt(target.x,target.y)))return null;
     const sx = clamp(Math.round(from.x), 0, N - 1), sy = clamp(Math.round(from.y), 0, N - 1);
     const tx = clamp(Math.round(target.x), 0, N - 1), ty = clamp(Math.round(target.y), 0, N - 1);
     const start = sy * N + sx, end = ty * N + tx;
     if (start === end) return [copyPoint(target)];
-    if(cartOnly){
-      const result=shortestRoadPath(this.navigationTiles(),{x:sx,y:sy},{x:tx,y:ty},{edgeAllowed:(a,b)=>this._navigationEdge(a,b)&&(!edgeAllowed||edgeAllowed(a,b))});if(!result)return null;
-      if(distance(from,{x:sx,y:sy})>.001)result.unshift({x:sx,y:sy});
-      result[result.length-1]=copyPoint(target);return result;
-    }
     const nav=this.navigationTiles();
     const queue = [start], previous = new Int16Array(N * N); previous.fill(-1); previous[start] = start;
     for (let i = 0; i < queue.length && previous[end] === -1; i++) {
@@ -1232,3 +1250,4 @@ export class GolfSim {
     this.dayRevenue = 0;
   }
 }
+Object.assign(GolfSim.prototype,cartJourney);

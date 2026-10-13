@@ -17,7 +17,7 @@ export function roadNeighbors(tiles,x,y,options){
   return ROAD_DIRECTIONS.map(([dx,dy])=>({x:x+dx,y:y+dy})).filter(p=>roadEdgeAllowed(tiles,{x,y},p,options));
 }
 
-export function shortestRoadPath(tiles,from,to,{edgeAllowed}={}){
+export function shortestRoadPath(tiles,from,to,{edgeAllowed,weight=()=>1}={}){
   const size=tiles.length,start=from.y*size+from.x,end=to.y*size+to.x;
   if(tile(tiles,from.x,from.y)?.type!=='path'||tile(tiles,to.x,to.y)?.type!=='path')return null;
   if(start===end)return [];
@@ -32,7 +32,7 @@ export function shortestRoadPath(tiles,from,to,{edgeAllowed}={}){
     const x=key%size,y=Math.floor(key/size);
     for(const p of roadNeighbors(tiles,x,y)){
       if(edgeAllowed&&!edgeAllowed({x,y},p))continue;
-      const next=p.y*size+p.x,total=cost+Math.hypot(p.x-x,p.y-y);
+      const next=p.y*size+p.x,total=cost+Math.hypot(p.x-x,p.y-y)*weight({x,y},p);
       if(total<costs[next]){costs[next]=total;previous[next]=key;push(next,total)}
     }
   }

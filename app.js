@@ -1,4 +1,5 @@
-import { GolfSim, N, COSTS, PACE, CLUBS, SHOT_STYLES } from './engine.js?v=13';
+import { GolfSim, N, COSTS, PACE, CLUBS, SHOT_STYLES } from './engine.js?v=16';
+import {installCartView} from './cart-view.js?v=16';
 import { swingPose, rollProgress, walkingPose, contactPoint, BALL_RADIUS, cartPose } from './animation.js?v=13';
 import {HEIGHT_SCALE,sampleRoll,unprojectHeight} from './terrain.js?v=13';
 import {roadNeighbors} from './roads.js?v=13';
@@ -16,15 +17,16 @@ import {ambientBirds,drawAmbient,drawWindRipples,plantSway,flagFlutter} from './
 
 const $ = id => document.getElementById(id);
 const sim = new GolfSim({preset:PARANA_ID});
+sim.tidyCartPaths();
 const shotStyle=()=>$('shotStyle').value;
 $('shotClub').innerHTML=Object.entries(CLUBS).map(([id,c])=>`<option value="${id}">${c.name} · ${Math.round(c.range*20)} m</option>`).join('');
 const STORAGE = 'paraiso-golf-v1';
 let storageOK = true;
-try { const saved = localStorage.getItem(STORAGE); if (saved) { const version=JSON.parse(saved).version;if(version<5)localStorage.setItem(STORAGE+'-before-relief',saved);if(version<6)localStorage.setItem(STORAGE+'-before-course',saved);if(version<7)localStorage.setItem(STORAGE+'-before-field11',saved);if(version<8)localStorage.setItem(STORAGE+'-before-shot13',saved);if(!sim.load(saved))storageOK=false; } } catch { storageOK = false; }
+try { const saved = localStorage.getItem(STORAGE); if (saved) { const version=JSON.parse(saved).version;if(version<5)localStorage.setItem(STORAGE+'-before-relief',saved);if(version<6)localStorage.setItem(STORAGE+'-before-course',saved);if(version<7)localStorage.setItem(STORAGE+'-before-field11',saved);if(version<8)localStorage.setItem(STORAGE+'-before-shot13',saved);if(version<9)localStorage.setItem(STORAGE+'-before-carts16',saved);if(!sim.load(saved))storageOK=false; } } catch { storageOK = false; }
 const canvas = $('course');let ctx = canvas.getContext('2d');
 const camera = {zoom:1.35, dx:0, dy:0};
 const MAX_ZOOM=40;
-let gameUI=null;
+let gameUI=null,cartView=null;
 const appearanceOf=g=>gameUI?.appearance(g)||defaultAppearance(g);
 let width = 800, height = 600, tileW = 30, tileH = 15, ox = 400, oy = 80;
 let tool = 'inspect', brush = 1, hover = null, selectedHole = sim.holes[0]?.id ?? null, pendingTee = null;
@@ -562,20 +564,21 @@ document.querySelectorAll('.brush').forEach(b=>b.addEventListener('click',()=>{b
 $('zoomIn').onclick=()=>zoom(1.2);$('zoomOut').onclick=()=>zoom(1/1.2);$('fit').onclick=()=>{camera.zoom=1;camera.dx=0;camera.dy=0;geometry()};
 $('pause').onclick=()=>{sim.paused=!sim.paused;updateUI()};document.querySelectorAll('.speed').forEach(b=>b.onclick=()=>{sim.speed=Number(b.dataset.speed);document.querySelectorAll('.speed').forEach(el=>el.classList.toggle('active',el===b));sim.paused=false;updateUI()});
 $('fee').addEventListener('change',e=>{sim.setFee(Number(e.target.value));toast('Entrada actualizada a '+money(sim.fee));save(false)});
-$('undo').onclick=()=>{const snapshot=undoStack.pop();if(!snapshot){toast('Todavía no hay una edición para deshacer.');return}const keep=new Set(snapshot.holes.map(h=>h.id));for(const h of [...sim.holes])if(!keep.has(h.id))sim.removeHole(h.id);sim.tiles=snapshot.tiles;sim.elevations=snapshot.elevations;sim.holes=snapshot.holes;sim.cartBays=snapshot.cartBays;sim.depotBays=snapshot.depotBays;terrainCache=null;sim.money+=snapshot.cost;for(const g of sim.golfers){g._path=null;g.holeIndex=sim.holes.findIndex(h=>h.id===g.holeId)}for(const c of sim.carts)c._path=null;selectedHole=sim.holes[0]?.id??null;pendingTee=null;updateUI();save(false);toast('Última edición deshecha.')};
+$('undo').onclick=()=>{const snapshot=undoStack.pop();if(!snapshot){toast('Todavía no hay una edición para deshacer.');return}const keep=new Set(snapshot.holes.map(h=>h.id));for(const h of [...sim.holes])if(!keep.has(h.id))sim.removeHole(h.id);sim.tiles=snapshot.tiles;sim.invalidateCartNetwork();sim.elevations=snapshot.elevations;sim.holes=snapshot.holes;sim.cartBays=snapshot.cartBays;sim.depotBays=snapshot.depotBays;terrainCache=null;sim.money+=snapshot.cost;for(const g of sim.golfers){g._path=null;g.holeIndex=sim.holes.findIndex(h=>h.id===g.holeId)}for(const c of sim.carts)c._path=null;selectedHole=sim.holes[0]?.id??null;pendingTee=null;updateUI();save(false);toast('Última edición deshecha.')};
 $('holeTabs').addEventListener('click',e=>{const b=e.target.closest('[data-id]');if(!b)return;const h=sim.holes.find(h=>String(h.id)===b.dataset.id);if(h){selectedHole=h.id;sim.selectedGolferId=null;camera.zoom=(width<590?3:2)*N/48;geometry();centerOn({x:(h.tee.x+h.green.x)/2,y:(h.tee.y+h.green.y)/2});updateUI()}});
 $('addPractice').onclick=()=>{checkpoint();const result=sim.addPracticeHoles();if(result.ok){terrainCache=null;save(false)}else undoStack.pop();toast(result.message);updateUI()};
 function save(show=true){try{const snapshot=sim.save();localStorage.setItem(STORAGE,snapshot);if(sim.courseId===PARANA_ID){localStorage.setItem(STORAGE+'-parana',snapshot);localStorage.setItem(STORAGE+'-parana-r'+sim.courseRevision,snapshot);}storageOK=true;$('saveStatus').textContent='Guardado en este navegador';if(show)toast('Partida guardada en este navegador.')}catch{storageOK=false;$('saveStatus').textContent='Guardado local no disponible';if(show)toast('El navegador no permitió guardar la partida.')}}
 $('save').onclick=()=>save();$('help').onclick=()=>$('helpDialog').showModal();$('projectGuide').onclick=()=>$('guideDialog').showModal();$('newMap').onclick=()=>$('newDialog').showModal();
 $('connectRoads').onclick=()=>{checkpoint();const r=sim.connectCartPaths();if(r.ok){terrainCache=null;save(false)}else undoStack.pop();toast(r.message);updateUI()};
+$('tidyRoads').onclick=()=>{checkpoint();const r=sim.tidyCartPaths();terrainCache=null;toast(r.message);save(false);updateUI();};
 $('refineRoads').onclick=()=>{checkpoint();const r=sim.refineCartPaths();if(r.ok){terrainCache=null;save(false)}else undoStack.pop();toast(r.message);updateUI()};
 document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>$(b.dataset.close).close());
 function fieldChanged(empty=false){terrainCache=null;selectedHole=sim.holes[0]?.id??null;sim.selectedGolferId=null;undoStack=[];aimTarget=null;aimKey='';lastPlayerHole=null;camera.zoom=1;camera.dx=0;camera.dy=0;geometry();setTool(empty?'hole':'inspect');$('newDialog').close();save(false);updateUI()}
-function newMap(empty){if(sim.courseId===PARANA_ID)save(false);sim.reset(empty);fieldChanged(empty);toast(empty?'Tu terreno está listo. Empezá por una salida y una bandera.':'Seis hoyos y un nuevo comienzo.')}
+function newMap(empty){if(sim.courseId===PARANA_ID)save(false);sim.reset(empty);if(!empty)sim.tidyCartPaths();fieldChanged(empty);toast(empty?'Tu terreno está listo. Empezá por una salida y una bandera.':'Seis hoyos y un nuevo comienzo.')}
 $('demoMap').onclick=()=>newMap(false);$('emptyMap').onclick=()=>newMap(true);
 $('paranaMap').onclick=()=>{
   if(sim.courseId===PARANA_ID){$('newDialog').close();toast('Ya estás en el Paraná. Tus cambios y el partido siguen guardados.');return}
-  try{localStorage.setItem(STORAGE+'-before-parana',sim.save());const saved=localStorage.getItem(STORAGE+'-parana');if(!saved||!sim.load(saved))sim.reset(false,PARANA_ID)}catch{toast('No se pudo guardar tu campo anterior. Liberá espacio del navegador antes de cambiar.');return}
+  try{localStorage.setItem(STORAGE+'-before-parana',sim.save());const saved=localStorage.getItem(STORAGE+'-parana');if(!saved||!sim.load(saved)){sim.reset(false,PARANA_ID);sim.tidyCartPaths();}}catch{toast('No se pudo guardar tu campo anterior. Liberá espacio del navegador antes de cambiar.');return}
   fieldChanged();toast('Paraná listo: nueve hoyos. Podés volver a tu campo anterior desde Nuevo campo.');
 };
 $('recoverField').onclick=()=>{
@@ -587,7 +590,7 @@ $('upgradeParana').onclick=()=>{
   try{
     localStorage.setItem(STORAGE+'-before-parana-relief',sim.save());
     const saved=localStorage.getItem(STORAGE+'-parana-r3');
-    if(!saved||!sim.load(saved))sim.reset(false,PARANA_ID);
+    if(!saved||!sim.load(saved)){sim.reset(false,PARANA_ID);sim.tidyCartPaths();};
   }catch{toast('No se pudo guardar la copia anterior. El recorrido actual sigue disponible.');return}
   fieldChanged();toast('Paraná con pendientes, camino lateral y puente. Tu recorrido y partido anteriores quedan guardados.');
 };
@@ -671,18 +674,29 @@ $('hitShot').onclick=()=>{const result=sim.playShot(aimTarget,$('shotClub').valu
 $('leaveRound').onclick=()=>{sim.abandonPlayerRound();setTool('inspect');save(false);updateUI()};
 let previous=performance.now();
 function frame(ts){
-  const dt=Math.min(.1,(ts-previous)/1000);previous=ts;sim.tick(dt);now=sim._clock;
+  const dt=Math.min(.1,(ts-previous)/1000);previous=ts;cartView?.beforeTick();sim.tick(dt);now=sim._clock;
+  cartView?.frame(ts);
   const panning=drag&&(drag.tool==='inspect'||drag.tool==='aim');
   if(ts-lastUI>500&&!panning){updateUI();lastUI=ts}
   if(ts-autoSave>8000&&!drag){save(false);autoSave=ts}
   // Camera input paints on the next animation frame. Idle scenery retains
   // the lighter cadence; all actor/landscape animation keeps simulation time.
-  if(cameraDirty||panning||sim.golfers.some(g=>g.phase==='swinging')||ts-lastDraw>=32){
+  if(!cartView?.active&&(cameraDirty||panning||sim.golfers.some(g=>g.phase==='swinging')||ts-lastDraw>=32)){
     draw();lastDraw=ts;cameraDirty=false;
   }
   requestAnimationFrame(frame);
 }
 gameUI=installGameUI({sim,defaultAppearance,drawGolfer,focusDetail,onPanelChange:panel=>{if(panel==='play'&&player())focusPlayer()},toast});
+const driveTreeSprites=new Map();
+function driveTreeSprite(x,y){
+  const key=x+','+y;if(driveTreeSprites.has(key))return driveTreeSprites.get(key);
+  const sprite=document.createElement('canvas');sprite.width=128;sprite.height=128;
+  const previousContext=ctx,anchor=iso(x,y),scale=64/tileW;
+  try{ctx=sprite.getContext('2d');ctx.setTransform(scale,0,0,scale,64-anchor.x*scale,117-anchor.y*scale);drawTree(x,y);}finally{ctx=previousContext;}
+  if(driveTreeSprites.size>=384)driveTreeSprites.delete(driveTreeSprites.keys().next().value);
+  driveTreeSprites.set(key,sprite);return sprite;
+}
+cartView=installCartView({sim,treeSprite:driveTreeSprite,toast,onEnter:()=>{gameUI.setPanel('none');gameUI.setControls('none');drag=null;setTool('inspect');},onExit:cart=>{if(cart){camera.zoom=4;geometry();centerOn(cart);}cameraDirty=true;}});
 resize();
 if(width<590&&sim.playerRound?.status!=='playing'){
   const h=sim.holes.find(h=>h.id===selectedHole);
