@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#173e2f" />
+  <title>Paraíso Golf · Tu pequeño gran club</title>
+  <meta name="description" content="Diseñá un campo de golf, observá a sus jugadores y hacé crecer tu club. Un primer prototipo isométrico inspirado en los clásicos." />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%233d633e'/%3E%3Cpath d='M10 26V6l15 5-15 5' fill='%23efd777' stroke='%23fff' stroke-width='2'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="style.css?v=14" />
+</head>
+<body data-open-panel="none" data-tool="inspect">
+  <main class="workspace">
+    <section class="play-area" aria-label="Campo de golf">
+      <div class="hud-controls" aria-label="Menús del juego">
+        <div class="hud-control-group">
+          <button id="menu" class="hud-toggle" aria-controls="quickMenu" aria-expanded="false" title="Abrir menú" aria-label="Abrir menú">≡</button>
+          <section id="quickMenu" class="topbar hud-popover" aria-label="Menú del juego" hidden>
+            <div class="quick-menu-heading"><b>Tu club</b><span class="version">PRUEBA 15</span></div>
+            <div class="top-stats"><div><small>CAJA DEL CLUB</small><strong id="money">$15.000</strong></div><div class="mood-stat"><small>SATISFACCIÓN</small><strong id="mood">80 <span>/ 100</span></strong></div></div>
+            <nav id="gameDock" aria-label="Controles del juego">
+              <button class="dock-button" data-panel="play" aria-controls="gameDrawer" aria-pressed="false"><i aria-hidden="true">⚑</i><span>Partido</span></button>
+              <button class="dock-button" data-panel="build" aria-controls="gameDrawer" aria-pressed="false"><i aria-hidden="true">⌁</i><span>Construir</span></button>
+              <button class="dock-button" data-panel="course" aria-controls="gameDrawer" aria-pressed="false"><i aria-hidden="true">▦</i><span>Recorrido</span></button>
+              <button class="dock-button" data-panel="club" aria-controls="gameDrawer" aria-pressed="false"><i aria-hidden="true">⌂</i><span>Club</span></button>
+              <button class="dock-button" data-panel="golfer" aria-controls="gameDrawer" aria-pressed="false"><i aria-hidden="true">♟</i><span>Golfista</span></button>
+              <button class="dock-button" data-panel="activity" aria-controls="gameDrawer" aria-pressed="false"><i aria-hidden="true">☷</i><span>Vida del club</span></button>
+            </nav>
+            <div class="header-actions"><button id="save" class="save" title="Guardar partida">Guardar</button><button id="help" class="hud-button" title="Cómo jugar" aria-label="Cómo jugar">?</button><button id="fullscreen" class="hud-button" title="Pantalla completa" aria-label="Pantalla completa">⛶</button><div class="wind-hud" aria-label="Viento" title="Dirección y velocidad del viento"><span id="windArrow" role="img" aria-label="Dirección del viento">→</span><span id="windSpeed">0 km/h</span></div></div>
+            <div class="course-top" hidden><span id="courseCaption">CLUB DE CAMPO</span><span id="courseName">Paraíso Golf</span><span id="day">Día 1</span><span id="time">08:00 · Cielo despejado</span></div>
+          </section>
+        </div>
+        <div class="hud-control-group">
+          <button id="cameraToggle" class="hud-toggle" aria-controls="cameraControls" aria-expanded="false" title="Abrir cámara y zoom" aria-label="Abrir cámara y zoom"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="10" cy="10" r="6.5" /><path d="M15 15L21 21M10 7V13M7 10H13" stroke-linecap="round" /></svg></button>
+          <section id="cameraControls" class="view-tools hud-popover" aria-label="Cámara y zoom" hidden><button id="zoomOut" aria-label="Alejar">−</button><button id="zoomIn" aria-label="Acercar">+</button><button id="fit" title="Centrar campo" aria-label="Centrar campo">⌖</button><button id="golferDetail" title="Acercar al golfista" aria-label="Acercar al golfista">♟</button><button id="planView" title="Ver plano del recorrido" aria-label="Ver plano del recorrido" hidden>▦</button></section>
+        </div>
+        <div class="hud-control-group">
+          <button id="speedToggle" class="hud-toggle speed-toggle" aria-controls="speedControls" aria-expanded="false" title="Abrir pausa y velocidad" aria-label="Abrir pausa y velocidad">1×</button>
+          <section id="speedControls" class="sim-controls hud-popover" aria-label="Pausa y velocidad" hidden><button id="pause" aria-label="Pausar simulación">Ⅱ</button><button class="speed" data-speed="0.5" title="Cámara lenta para ver el swing">½×</button><button class="speed active" data-speed="1">1×</button><button class="speed" data-speed="2">2×</button><button class="speed" data-speed="4">4×</button></section>
+        </div>
+      </div>
+      <div class="viewport" id="viewport">
+        <canvas id="course" aria-label="Campo isométrico editable. Elegí una herramienta y tocá el terreno." tabindex="0"></canvas>
+        <div class="map-title"><span class="live-dot"></span> TU CLUB ESTÁ VIVO</div>
+        <div class="map-hint" id="mapHint">Tocá un golfista para conocer su historia.</div>
+        <div id="toast" class="toast" role="status"></div>
+        <div class="compass" aria-hidden="true"><span id="compassLabel">N</span>✧</div>
+      </div>
+      <section id="gameDrawer" aria-labelledby="panelTitle">
+        <div id="drawerHeading" class="drawer-heading"><b id="panelTitle">Controles del club</b><button id="drawerClose" title="Cerrar panel" aria-label="Cerrar panel">×</button></div>
+        <div class="drawer-content">
+      <section class="player-bar" aria-label="Tu partido">
+        <div class="round-heading"><div><span class="eyebrow">TU GOLFISTA · PARTIDO POR GOLPES</span><p id="roundStatus" role="status">Jugá el recorrido contra Álex. Gana quien use menos golpes.</p></div><button id="followPlayer" class="round-secondary" hidden>Ver mi golfista ⌖</button></div>
+        <div id="roundStart" class="round-start"><label for="playerName">Tu nombre <input id="playerName" maxlength="24" value="Gastón" autocomplete="off" /></label><button id="startRound" class="round-primary">⛳ Jugar un partido</button></div>
+        <div id="shotControls" class="shot-controls" hidden>
+          <label for="shotClub">Palo<select id="shotClub"><option value="driver">Driver</option><option value="iron">Hierro</option><option value="wedge">Wedge</option><option value="putter">Putter</option></select></label>
+          <label for="shotStyle">Tiro<select id="shotStyle"><option value="straight">Recto</option><option value="draw">Draw ↶</option><option value="fade">Fade ↷</option><option value="high">Alto · frena al picar</option><option value="low">Bajo / punch</option></select></label>
+          <label for="shotPower" class="power-control">Fuerza <output id="powerValue">100%</output><input id="shotPower" type="range" min="1" max="100" value="100" step="1" /></label>
+          <button id="aimFlag" class="round-secondary">Apuntar a bandera ⚑</button><button id="hitShot" class="round-primary" disabled>Golpear →</button>
+          <p id="shotInfo">Esperá tu turno para elegir el tiro.</p>
+        </div>
+        <div id="roundScores" class="round-scores"></div>
+        <button id="leaveRound" class="round-leave" hidden>Dejar que mi golfista termine solo</button>
+      </section>
+      <div class="toolbar" aria-label="Herramientas del campo">
+        <div class="tools">
+          <button class="tool active" data-tool="inspect"><i>↖</i><span>Observar</span></button>
+          <button class="tool" data-tool="fairway"><i class="swatch fairway"></i><span>Fairway</span><small>$45</small></button>
+          <button class="tool" data-tool="sand"><i class="swatch sand"></i><span>Arena</span><small>$70</small></button>
+          <button class="tool" data-tool="water"><i class="swatch water"></i><span>Agua</span><small>$95</small></button>
+          <button class="tool" data-tool="tree"><i>♣</i><span>Árbol</span><small>$30</small></button>
+          <button class="tool" data-tool="path"><i class="swatch path"></i><span>Camino</span><small>$25</small></button>
+          <button class="tool" data-tool="hole"><i>⚑</i><span>Nuevo hoyo</span><small>$650</small></button>
+          <button class="tool" data-tool="raise"><i>↟</i><span>Elevar</span><small>$12</small></button><button class="tool" data-tool="lower"><i>↡</i><span>Bajar</span><small>$12</small></button><button class="tool" data-tool="grass"><i>⌫</i><span>Césped</span><small>$10</small></button>
+        </div>
+        <div class="brush-group"><span>PINCEL</span><button class="brush active" data-size="1">1</button><button class="brush" data-size="3">3</button><button class="brush" data-size="5">5</button><button id="undo" title="Deshacer última edición" aria-label="Deshacer última edición">↶</button></div>
+      </div>
+      <div class="scorecard"><div class="scorecard-label"><span>⚑</span><div><b>El recorrido</b><small id="courseSummary">64×64 · 9 hoyos</small></div></div><div id="holeTabs" class="hole-tabs"></div><div class="course-actions"><button id="addPractice" class="new-map" hidden>Agregar 3 hoyos de práctica</button><button id="connectRoads" class="new-map">Conectar caminos</button><button id="refineRoads" class="new-map" title="Rediseña los caminos junto a los hoyos; podés deshacer">Afinar caminos</button><button id="upgradeParana" class="new-map" hidden>Probar pendientes y puente</button><button id="newMap" class="new-map">Nuevo campo ↗</button></div></div>
+    <aside class="sidebar">
+      <section class="panel club-panel"><div class="panel-heading"><span class="eyebrow">ADMINISTRACIÓN</span><span class="pill">ABIERTO</span></div><div class="club-stats"><div><strong id="visitors">0</strong><span>visitas</span></div><div><strong id="activePlayers">0</strong><span>jugando</span></div><div><strong id="revenue">$0</strong><span>ingresos</span></div></div><div class="fee-row"><label for="fee">Entrada al club</label><div><span>$</span><input type="number" id="fee" min="5" max="150" value="45" step="5" aria-label="Precio de entrada" /></div></div><div class="maintenance"><span>Mantenimiento diario</span><b id="maintenance">$0</b></div><div class="satisfaction-bar"><span id="moodBar"></span></div><small class="muted" id="moodAdvice">Los golfistas disfrutan del recorrido.</small></section>
+      <section class="panel pace-panel"><span class="eyebrow">RITMO DEL HOYO · 1× NATURAL</span><div class="pace-clock"><strong id="paceTime">0:00</strong><span>tiempo del grupo</span></div><p id="paceAction">Llegando en carritos</p><small>Dos jugadores · tiros por turnos · swing completo</small></section>
+      <section class="panel inspector"><span class="eyebrow" id="inspectorTag">EN EL CAMPO</span><div id="inspectorBody"></div></section>
+      <section id="wardrobe" class="panel wardrobe" aria-label="Indumentaria del golfista">
+        <h3>Tu indumentaria</h3>
+        <div class="outfit-layout"><canvas id="outfitPreview" width="256" height="320" aria-label="Vista de detalle de tu golfista y su indumentaria"></canvas><div class="outfit-controls">
+          <label for="outfitShirt">Remera<select id="outfitShirt"><option value="#edbc4b">Amarillo</option><option value="#3d7e65">Verde</option><option value="#c35453">Rojo</option><option value="#547aa2">Azul</option></select></label>
+          <label for="outfitPants">Pantalón<select id="outfitPants"><option value="#ded9be">Beige</option><option value="#3f5351">Gris verde</option><option value="#263e55">Azul oscuro</option></select></label>
+          <label for="outfitHat">Gorra<select id="outfitHat"><option value="cap">Gorra</option><option value="visor">Visera</option><option value="none">Sin gorra</option></select></label>
+          <label for="outfitEmblem">Escudo<select id="outfitEmblem"><option value="flag">Bandera</option><option value="leaf">Hoja</option><option value="diamond">Rombo</option><option value="none">Sin escudo</option></select></label>
+        </div></div><p class="wardrobe-note">Los escudos son diseños propios.</p>
+      </section>
+      <section class="panel activity-panel"><div class="panel-heading"><span class="eyebrow">VIDA DEL CLUB</span><span class="tiny-dot"></span></div><div id="activity" class="activity"></div></section>
+      <section class="challenge"><div class="challenge-icon">✧</div><div><span class="eyebrow">TU PRIMER DESAFÍO</span><p id="challengeText">Llegá a 85 de satisfacción con al menos 3 hoyos.</p><div class="challenge-track"><span id="challengeBar"></span></div></div></section>
+    </aside>
+      <div class="footnote"><span>Dibujos y código propios.</span><button id="projectGuide">Guía del proyecto ↗</button><span id="saveStatus">Guardado en este navegador</span></div>
+        </div>
+      </section>
+    </section>
+  </main>
+  <dialog id="helpDialog"><button class="dialog-close" data-close="helpDialog" aria-label="Cerrar">×</button><span class="eyebrow">BIENVENIDO AL CLUB</span><h2>Tu campo.<br>Muchas decisiones.</h2><p>Abrí ≡ para jugar un partido, construir y administrar tu club. Los controles quedan ocultos mientras observás el campo y sus grupos de dos golfistas.</p><ol class="help-steps"><li><b>Observá.</b> Tocá un golfista para ver su ánimo, habilidades y golpes.</li><li><b>Diseñá.</b> En ≡, abrí Construir, elegí Fairway y pintá una ruta. Arena y agua complican los tiros; los árboles embellecen y también molestan. Elevar y Bajar crean pendientes. En Recorrido, Conectar caminos une los estacionamientos; los carritos solo circulan por caminos. Arrastrá Camino para dibujar también diagonales continuas. Afinar caminos rediseña la red para que acompañe el campo; podés deshacerlo.</li><li><b>Probá.</b> Tocá el botón de velocidad para elegir 1× y observar la llegada, la preparación y el swing completo. Los grupos se toman alrededor de uno o dos minutos por hoyo; un recorrido difícil puede llevar más. También podés acelerar el tiempo.</li><li><b>Creá un hoyo.</b> En ≡ → Construir, elegí Nuevo hoyo y marcá la salida y después la bandera. Pintá el fairway entre ambos.</li></ol><p class="dialog-tip">Arrastrá para mover el mapa. El menú ≡ abre Partido, Construir y los demás controles. Tocá la lupa para abrir + / − y centrar el campo; tocá la velocidad para pausar o cambiar el ritmo. Volvé a tocar el botón del menú, tocá el campo o usá × en un panel para cerrar. En computadora: espacio pausa y Escape cierra los menús.</p><p class="muted">El guardado es local al navegador y dispositivo que usás. En ≡, abrí Partido y elegí “Jugar un partido” para controlar tu golfista contra Álex. Tocá el mapa para elegir la dirección: el punto marcado no limita el alcance. Elegí palo y tipo de tiro; bajá la fuerza para acortar el golpe y presioná “Golpear”. La vista previa marca el pique y el final estimado. El viento, las curvas del tiro, las pendientes, el rebote y la dispersión cambian dónde termina la pelota; no es un resultado garantizado.</p><button class="primary" data-close="helpDialog">Vamos al campo →</button></dialog>
+  <dialog id="newDialog"><button class="dialog-close" data-close="newDialog" aria-label="Cerrar">×</button><span class="eyebrow">ELEGÍ TU RECORRIDO</span><h2>Elegí tu terreno.</h2><p>Paraná conserva una copia de tu campo actual para que puedas volver. El relieve sigue tu descripción como referencia; la ruta seca junto a H5/H6 y el puente entre G6 y T7 tienen ubicaciones y alturas estimadas. La demostración y el terreno vacío empiezan una partida nueva.</p><div class="new-options"><button id="paranaMap"><b>Paraná Country Club</b><span>Primeros nueve · par 36 · pendientes, ruta lateral H5/H6 y puente estimados.</span></button><button id="recoverField" hidden><b>Volver a mi campo</b><span>Recuperá la partida anterior al Paraná.</span></button><button id="restoreParana" hidden><b>Recuperar recorrido anterior</b><span>Volvé al Paraná y a tu partido guardados antes de probar estas mejoras.</span></button><button id="demoMap"><b>Campo de demostración</b><span>Seis hoyos en 64×64 casillas para editar y jugar.</span></button><button id="emptyMap"><b>Empezar desde cero</b><span>Un terreno libre, $15.000 y tus ideas.</span></button></div></dialog>
+  <dialog id="coursePlanDialog" aria-labelledby="coursePlanTitle">
+    <button class="dialog-close" data-close="coursePlanDialog" aria-label="Cerrar plano">×</button>
+    <span class="eyebrow">PARANÁ COUNTRY CLUB · PRIMEROS NUEVE</span>
+    <h2 id="coursePlanTitle">Plano del Paraná</h2>
+    <div class="plan-options"><label><input id="planReference" type="checkbox" checked /> Contornos de referencia</label><label><input id="planNavigation" type="checkbox" checked /> Conexiones a pie</label></div>
+    <div class="plan-canvas-wrap"><canvas id="coursePlan" aria-label="Plano cenital de los nueve hoyos, tees, greens, lagunas, bosque y conexiones a pie."></canvas></div>
+    <p id="planStatus" class="plan-status" role="status"></p>
+    <p id="planConnections" class="plan-connections"></p>
+    <p class="plan-note">Los contornos y la escala son aproximados. Green 7 y tee 8 tienen menor precisión en la referencia. Las lagunas y el bosque siguen el plano; el relieve reproduce tu descripción con alturas relativas estimadas. La ruta de H5/H6 y el puente entre G6 y T7 son aproximados. La casa del club es un punto de inicio provisional: su ubicación real queda por confirmar. Los bunkers están ubicados provisionalmente; podremos ajustarlos con referencias. Las casas requieren ubicación.</p>
+  </dialog>
+  <dialog id="guideDialog"><button class="dialog-close" data-close="guideDialog" aria-label="Cerrar">×</button><span class="eyebrow">DE LA IDEA AL JUEGO</span><h2>El camino del proyecto.</h2><p>El objetivo es recrear la sensación de administrar un campo vivo, con un juego y recursos gráficos propios.</p><ol class="help-steps"><li><b>Referencias:</b> reunir el manual, videos de partidas y capturas de construcción, gestión, profesional y torneos.</li><li><b>Reglas:</b> escribir una ficha por sistema con acciones, resultados, costes y casos especiales. Distinguir reglas verificadas de nuestras aproximaciones.</li><li><b>Primera prueba:</b> editor isométrico, golfistas, obstáculos, caja, satisfacción y guardado local.</li><li><b>Afinar:</b> corregir rutas, animaciones, ritmo, dificultad y economía con partidas reales y tus observaciones.</li><li><b>Expandir:</b> más habilidades y análisis de tiros; después torneos, personal, socios, servicios y expansión.</li></ol><h3>Documentos que acompañan el código</h3><p>Diseño del juego · Catálogo de objetos · Reglas de los golfistas · Guía visual · Arquitectura y guardado · Lista de pruebas · Registro de diferencias con SimGolf.</p><h3>Referencias iniciales</h3><p><a href="https://www.ladydragon.com/230102simgolf.html" target="_blank" rel="noopener">Comunicado de EA de 2002</a><br><a href="https://oldgamesdownload.com/readme/sid-meier-s-simgolf-windows-patch-notes-version-1-03-english/" target="_blank" rel="noopener">Notas originales de las actualizaciones</a></p><p class="muted">El manual completo y las fórmulas originales todavía deben verificarse. La física, los precios y la satisfacción de esta prueba son aproximaciones propias.</p></dialog>
+  <script type="module" src="app.js?v=15"></script>
+</body>
+</html>
